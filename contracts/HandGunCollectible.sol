@@ -9,11 +9,13 @@ contract HandGunCollectible is ERC721, ChainlinkClient {
 
     uint256 public tokenCounter;
     address public owner;
+    uint256 public per_collectible_price;
+    uint256 public total_funds_collected;
 
     mapping (bytes32 => address) public requestIdToSender;
     mapping (address => bool) public usedAirDrop; // Every account is eligible for 1 free collectible
     mapping (bytes32 => string) public requestIdToTokenURI;
-    mapping (IERC20 => uint256) public whitelistedTokens;
+    // mapping (IERC20 => uint256) public whitelistedTokens;
 
     address private oracle;
     bytes32 private jobId;
@@ -21,7 +23,9 @@ contract HandGunCollectible is ERC721, ChainlinkClient {
 
     event ownershipTransferedTo(address indexed new_owner);
     event requestedAirDrop(bytes32 indexed requestId);
-    event newTokenWhitelisted(IERC20 indexed token, uint256 indexed per_collectible_price);
+    event requestedCollectible(bytes32 indexed requestId);
+    event commissionChanged(uint256 new_commission);
+    // event newTokenWhitelisted(IERC20 indexed token, uint256 indexed per_collectible_price);
 
     constructor(
         address _oracle, 
@@ -42,6 +46,7 @@ contract HandGunCollectible is ERC721, ChainlinkClient {
         oracle = _oracle;
         jobId = stringToBytes32(_jobId);
         fee = _fee;
+        per_collectible_price = 0;
     }
 
     function transferOwnership(address new_owner) public {
@@ -50,12 +55,25 @@ contract HandGunCollectible is ERC721, ChainlinkClient {
         emit ownershipTransferedTo(new_owner);
     }
 
-    function whitelistToken(IERC20 token, uint256 per_collectible_price) public {
-        require(owner == msg.sender);
+    function changeCommission(uint256 new_commission) public {
+        require(msg.sender == owner, "Only owner can change the commission");
+        per_collectible_price = new_commission;
+        emit commissionChanged(new_commission);
+    } 
 
-        whitelistedTokens[token] = per_collectible_price;
-        emit newTokenWhitelisted(token, per_collectible_price);
+    function withdrawCollection(address payable benificiary, uint256 amount) public {
+        require(owner == msg.sender, "Only owner can withdraw");
+        require(amount <= total_funds_collected, "Withdraw amount greater than total_funds_collected");
+
+        benificiary.transfer(amount);
     }
+
+    // function whitelistToken(IERC20 token, uint256 per_collectible_price) public {
+    //     require(owner == msg.sender);
+
+    //     whitelistedTokens[token] = per_collectible_price;
+    //     emit newTokenWhitelisted(token, per_collectible_price);
+    // } 
 
     function requestAirDrop(string memory tokenURI) public returns (bytes32) {
         // Check if eligible for airdrop
@@ -83,13 +101,33 @@ contract HandGunCollectible is ERC721, ChainlinkClient {
     function createCollectible(string memory tokenURI) public payable returns (bytes32) {
 
         // Take payment
+        if(per_collectible_price > 0) {
+            require(
+                msg.value > 0,
+                "Must pay the price of each token"
+            );
+            require(
+                msg.value % per_collectible_price == 0,
+                "Must pay a multiple of per collectible price"
+            );
+        }
 
+        total_funds_collected += msg.value;
 
         Chainlink.Request memory request = buildChainlinkRequest(jobId, address(this), this.fulfill.selector);
 
         // Set the URL to perform the GET request on
         request.add("get","http://www.randomnumberapi.com/api/v1.0/random");
 
+        // Send the request
+        bytes32 requestId = sendChainlinkRequestTo(oracle, request, fee);
+
+        requestIdToSender[requestId] = msg.sender;
+        requestIdToTokenURI[requestId] = tokenURI;
+
+        emit requestedCollectible(requestId);
+
+        return requestId;
     }
 
     function fulfill(bytes32 _requestId, uint256 _volume) public recordChainlinkFulfillment(_requestId) {
