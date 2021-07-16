@@ -15,17 +15,26 @@ contract HandGunCollectible is ERC721, ChainlinkClient {
     mapping (bytes32 => address) public requestIdToSender;
     mapping (address => bool) public usedAirDrop; // Every account is eligible for 1 free collectible
     mapping (bytes32 => string) public requestIdToTokenURI;
+    mapping (uint256 => Weapon) public tokenIdToWeapon;
+    mapping (bytes32 => uint256) public requestIdToTokenId;
     // mapping (IERC20 => uint256) public whitelistedTokens;
 
     address private oracle;
     bytes32 private jobId;
     uint256 private fee;
 
+    enum WeaponType { Revolver, AssaultRifle }
+
     event ownershipTransferedTo(address indexed new_owner);
     event requestedAirDrop(bytes32 indexed requestId);
     event requestedCollectible(bytes32 indexed requestId);
     event commissionChanged(uint256 new_commission);
     // event newTokenWhitelisted(IERC20 indexed token, uint256 indexed per_collectible_price);
+
+    struct Weapon {
+        WeaponType weaponType;
+        uint256 damage;
+    }
 
     constructor(
         address _oracle, 
@@ -34,7 +43,7 @@ contract HandGunCollectible is ERC721, ChainlinkClient {
         address _link
     )
     public 
-    ERC721("HandGuns","HG") {
+    ERC721("Survival Weapon","WEAPON") {
     
         if(_link == address(0)) {
             setPublicChainlinkToken();
@@ -78,7 +87,7 @@ contract HandGunCollectible is ERC721, ChainlinkClient {
     function requestAirDrop(string memory tokenURI) public returns (bytes32) {
         // Check if eligible for airdrop
         require(
-            usedAirDrop[msg.sender] == false
+            usedAirDrop[msg.sender] != true
         );
 
         Chainlink.Request memory request = buildChainlinkRequest(jobId, address(this), this.fulfill.selector);
@@ -130,8 +139,39 @@ contract HandGunCollectible is ERC721, ChainlinkClient {
         return requestId;
     }
 
-    function fulfill(bytes32 _requestId, uint256 _volume) public recordChainlinkFulfillment(_requestId) {
-        // Do the main stuff of generating the NFT
+    function fulfill(bytes32 requestId, uint256 randomNumber) public recordChainlinkFulfillment(requestId) {
+        
+        address collectibleOwner = requestIdToSender[requestId];
+        string memory tokenURI = requestIdToTokenURI[requestId];
+
+        uint256 newTokenId = tokenCounter;
+
+        _safeMint(collectibleOwner, newTokenId);
+        _setTokenURI(newTokenId, tokenURI);
+        
+        WeaponType gunType = WeaponType(randomNumber%2);
+
+        uint256 minPower;
+        if(gunType == WeaponType.AssaultRifle)
+            minPower = 50;
+        else if(gunType == WeaponType.Revolver)
+            minPower = 10;
+
+        Weapon memory weapon = Weapon(gunType, minPower + (randomNumber%50)); // Power varies in range of 50
+
+        tokenIdToWeapon[newTokenId] = weapon;
+
+        requestIdToTokenId[requestId] = newTokenId;
+
+        tokenCounter+=1;
+    }
+
+    function setTokenURI(uint256 tokenId, string memory tokenURI) public {
+        require(
+            _isApprovedOrOwner(_msgSender(), tokenId),
+            "ERC721: transfer caller is not owner nor approved"
+        );
+        _setTokenURI(tokenId, tokenURI);
     }
 
     function stringToBytes32(string memory source) public pure returns (bytes32 result) {
